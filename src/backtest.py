@@ -56,8 +56,11 @@ def backtest_pair(
     else:
         hr = pd.Series(hedge_ratio, index=idx)
 
-    # Spread return: ret_y - beta_t * ret_x
-    spread_return = ret_y - hr * ret_x
+    # Gross exposure for dollar-neutral weighting (1 part Y, beta parts X)
+    gross_exposure = 1.0 + hr.abs()
+
+    # Spread return: normalized to gross capital base
+    spread_return = (ret_y - hr * ret_x) / gross_exposure
 
     # Gross return: position * spread_return (position from previous day)
     prev_signals = signals.shift(1).fillna(0)
@@ -75,19 +78,18 @@ def backtest_pair(
             prices_x=prices_x.reindex(idx),
             volumes_y=volumes_y.reindex(idx),
             volumes_x=volumes_x.reindex(idx),
-            trade_flags=trade_flag,
-            commission_per_share=cfg.get("commission_per_share", 0.005),
-            spread_model=cfg.get("spread_model", "hasbrouck"),
-            fixed_spread_bps=cfg.get("fixed_spread_bps", 2.0),
-            slippage_factor=cfg.get("slippage_factor", 0.1),
-            trade_size_dollars=cfg.get("trade_size_dollars", 100_000),
-            fallback_bps=cost_bps,
+            signals=signals,
+            hedge_ratio=hr,
+            cost_config=cfg
         )
     else:
-        # Simple fixed cost model
-        cost_per_trade = 2 * (cost_bps / 10_000)
-        cost = trade_flag * cost_per_trade
-
+        # Simple bps cost per leg, normalized to capital base
+        turnover_y = signals.diff().abs()
+        turnover_x = (signals * hr).diff().abs()
+        total_turnover = (turnover_y + turnover_x) / gross_exposure
+        cost = total_turnover * (cost_bps / 10000.0)
+        cost = cost.fillna(0)
+        
     net_return = gross_return - cost
 
     # Build result

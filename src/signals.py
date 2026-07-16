@@ -53,6 +53,7 @@ def generate_signals(
     """
     signals = pd.Series(0, index=zscore.index, dtype=int)
     position = 0
+    stopped_out = False  # Track if we are currently stopped out
 
     for i in range(len(zscore)):
         z = zscore.iloc[i]
@@ -69,22 +70,35 @@ def generate_signals(
                 signals.iloc[i] = 0
                 continue
 
+        # Check if we can reset the stopped_out flag
+        if stopped_out:
+            # Only allow re-entry if the z-score has returned inside the stop-loss bounds
+            if abs(z) < stop_loss_threshold:
+                stopped_out = False
+            else:
+                # Still stopped out, stay flat
+                signals.iloc[i] = 0
+                continue
+
         # Stop-loss
         if abs(z) > stop_loss_threshold and position != 0:
             position = 0
+            stopped_out = True
+            signals.iloc[i] = 0
+            continue
 
-        # Entry logic
-        elif position == 0:
+        # Exit logic
+        if position == -1 and z < exit_threshold:
+            position = 0
+        elif position == 1 and z > -exit_threshold:
+            position = 0
+
+        # Entry logic (only if we didn't just exit or stop out, and spread is not blown out)
+        if position == 0 and not stopped_out and abs(z) < stop_loss_threshold:
             if z > entry_threshold:
                 position = -1    # spread is rich -> short spread
             elif z < -entry_threshold:
                 position = 1     # spread is cheap -> long spread
-
-        # Exit logic
-        elif position == -1 and z < exit_threshold:
-            position = 0
-        elif position == 1 and z > -exit_threshold:
-            position = 0
 
         signals.iloc[i] = position
 
